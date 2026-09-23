@@ -6,7 +6,7 @@
  * e qualsiasi hosting in sottocartella.
  */
 
-const CACHE_NAME = 'eclipse-commander-v4.3.0';
+const CACHE_NAME = 'eclipse-commander-v4.3.1';
 const urlsToCache = [
     './',
     './index.html',
@@ -47,7 +47,7 @@ const urlsToCache = [
 
 // Install event - cache resources
 self.addEventListener('install', event => {
-    console.log('[SW] Installing v4.3.0...');
+    console.log('[SW] Installing v4.3.1...');
     event.waitUntil(
         caches.open(CACHE_NAME)
             .then(cache => {

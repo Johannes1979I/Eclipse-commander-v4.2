@@ -5,7 +5,7 @@
 
 const CONFIG = {
     // Versione app
-    VERSION: '4.3.0',
+    VERSION: '4.3.1',
     APP_NAME: 'Eclipse Commander 2027',
     
     // API endpoints

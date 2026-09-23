@@ -550,10 +550,14 @@ class EkosConnector {
         let xml = '<?xml version="1.0" encoding="UTF-8"?>\n';
         xml += '<SequenceQueue version="2.6">\n';
         
-        // Observer (opzionale)
-        xml += '  <Observer></Observer>\n';
-        xml += '  <CCD>Eclipse Commander</CCD>\n';
-        xml += '  <FilterWheel></FilterWheel>\n';
+        // Observer + parametri header (verificati su sorgente KStars sequencequeue.cpp)
+        xml += '  <Observer>Osservatorio Jupiter</Observer>\n';
+        // Eclissi: nessun enforcement guida/autofocus/refocus (non c'e' tempo)
+        xml += "  <GuideDeviation enabled='false'>2</GuideDeviation>\n";
+        xml += "  <GuideStartDeviation enabled='false'>2</GuideStartDeviation>\n";
+        xml += "  <RefocusOnTemperatureDelta enabled='false'>1</RefocusOnTemperatureDelta>\n";
+        xml += "  <RefocusEveryN enabled='false'>60</RefocusEveryN>\n";
+        xml += "  <RefocusOnMeridianFlip enabled='false'/>\n";
         
         // Converti ogni sequenza in job EKOS
         sequences.forEach((seq, index) => {
@@ -594,8 +598,12 @@ class EkosConnector {
                             Utils.log(`📷 Offset di default: ${finalOffset}`);
                         }
                         
-                        // TEMPERATURA (solo per camere raffreddate)
-                        if (camera && camera.cooling) {
+                        // TEMPERATURA: priorità all'input di sequenza (seq.temp), poi equipment
+                        if (seq.temp !== undefined && seq.temp !== null && seq.temp !== '') {
+                            finalTemp = parseInt(seq.temp);
+                            forceTemp = true;
+                            Utils.log(`❄️ Temperatura da sequenza: ${finalTemp}°C`);
+                        } else if (camera && camera.cooling) {
                             if (camera.coolingTemp !== undefined && camera.coolingTemp !== null) {
                                 finalTemp = camera.coolingTemp;
                             } else {
@@ -613,63 +621,61 @@ class EkosConnector {
                         }
                     }
                     
-                    // Crea Job EKOS
+                    // Nome target per-feature (diventa sottocartella e prefisso file via %t)
+                    const targetName = 'Eclipse_' + String(seq.name || 'Fase').trim()
+                        .replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+
+                    // Job EKOS — schema conforme al parser KStars (sequencejob.cpp::loadFrom, v2.6)
                     xml += '  <Job>\n';
                     xml += `    <Exposure>${exposureTime}</Exposure>\n`;
-                    xml += `    <Format>FITS</Format>\n`;
+                    xml += `    <Format></Format>\n`;
                     xml += `    <Encoding>FITS</Encoding>\n`;
-                    xml += `    <Binning>\n`;
-                    xml += `      <X>${seq.binning || 1}</X>\n`;
-                    xml += `      <Y>${seq.binning || 1}</Y>\n`;
-                    xml += `    </Binning>\n`;
-                    xml += `    <Frame>\n`;
-                    xml += `      <X>0</X>\n`;
-                    xml += `      <Y>0</Y>\n`;
-                    xml += `      <W>0</W>\n`;
-                    xml += `      <H>0</H>\n`;
-                    xml += `    </Frame>\n`;
-                    xml += `    <Temperature force="${forceTemp}">${finalTemp}</Temperature>\n`;
-                    xml += `    <Filter>${seq.filter || '-'}</Filter>\n`;
+                    xml += `    <Binning>\n      <X>${seq.binning || 1}</X>\n      <Y>${seq.binning || 1}</Y>\n    </Binning>\n`;
+                    xml += `    <Frame>\n      <X>0</X>\n      <Y>0</Y>\n      <W>0</W>\n      <H>0</H>\n    </Frame>\n`;
+                    // Temperatura solo se camera raffreddata e impostata
+                    if (forceTemp) {
+                        xml += `    <Temperature force='true'>${finalTemp}</Temperature>\n`;
+                    }
+                    // Filtro: solo se e' un vero filtro su ruota. Le etichette dell'eclissi
+                    // ('NESSUNO', 'ND5 Solar', 'RIMUOVERE ORA!'...) sono filtro MANUALE -> omesse
+                    // (altrimenti Ekos cerca un filtro con quel nome sulla ruota e logga warning).
+                    const fRaw = (seq.filter || '').trim();
+                    const isRealWheelFilter = fRaw && fRaw !== '-' &&
+                        !/nessuno|solar|filtro|rimuov|applicar|none/i.test(fRaw);
+                    if (isRealWheelFilter) {
+                        xml += `    <Filter>${fRaw}</Filter>\n`;
+                    }
                     xml += `    <Type>Light</Type>\n`;
-                    xml += `    <Prefix>\n`;
-                    xml += `      <RawPrefix>${seq.name}_${exposure}</RawPrefix>\n`;
-                    xml += `      <FilterEnabled>false</FilterEnabled>\n`;
-                    xml += `      <ExpEnabled>true</ExpEnabled>\n`;
-                    xml += `      <TimestampEnabled>true</TimestampEnabled>\n`;
-                    xml += `    </Prefix>\n`;
                     xml += `    <Count>${shots}</Count>\n`;
                     xml += `    <Delay>0</Delay>\n`;
-                    
-                    // Gain/ISO/Offset - sempre presenti se calcolati
-                    if (finalGain !== null) {
-                        xml += `    <Gain>${finalGain}</Gain>\n`;
-                    }
-                    if (finalOffset !== null) {
-                        xml += `    <Offset>${finalOffset}</Offset>\n`;
-                    }
-                    if (finalISO !== null) {
-                        xml += `    <ISO>${finalISO}</ISO>\n`;
-                    }
-                    
-                    // Properties custom
+                    // Naming moderno (il vecchio <Prefix> e' deprecato: legge i booleani come "1"/"0")
+                    xml += `    <TargetName>${targetName}</TargetName>\n`;
+                    xml += `    <FITSDirectory></FITSDirectory>\n`;
+                    xml += `    <PlaceholderFormat>/%t/%t_%e_%D</PlaceholderFormat>\n`;
+                    xml += `    <PlaceholderSuffix>3</PlaceholderSuffix>\n`;
+                    xml += `    <UploadMode>1</UploadMode>\n`;
+                    // Gain/Offset: Ekos li legge SOLO da <Properties> (cameraGain: CCD_GAIN.GAIN | CCD_CONTROLS.Gain)
                     xml += `    <Properties>\n`;
-                    xml += `      <PropertyVector name="CCD_FRAME_TYPE">\n`;
-                    xml += `        <OneElement name="FRAME_LIGHT" value="On"/>\n`;
-                    xml += `      </PropertyVector>\n`;
+                    if (finalGain !== null || finalOffset !== null) {
+                        xml += `      <PropertyVector name='CCD_CONTROLS'>\n`;
+                        if (finalGain !== null)   xml += `        <OneElement name='Gain'>${finalGain}</OneElement>\n`;
+                        if (finalOffset !== null) xml += `        <OneElement name='Offset'>${finalOffset}</OneElement>\n`;
+                        xml += `      </PropertyVector>\n`;
+                        // Fallback universale per camere con vettori dedicati (ZWO/QHY): ignorati se assenti
+                        if (finalGain !== null) {
+                            xml += `      <PropertyVector name='CCD_GAIN'>\n        <OneElement name='GAIN'>${finalGain}</OneElement>\n      </PropertyVector>\n`;
+                        }
+                        if (finalOffset !== null) {
+                            xml += `      <PropertyVector name='CCD_OFFSET'>\n        <OneElement name='OFFSET'>${finalOffset}</OneElement>\n      </PropertyVector>\n`;
+                        }
+                    }
                     xml += `    </Properties>\n`;
-                    
-                    // Calibration settings
+                    // Nota reflex: Ekos vuole <ISOIndex> (indice), non <ISO> (valore) -> gestito in fase live
+                    // Calibration conforme allo schema attuale (PreAction + FlatDuration)
                     xml += `    <Calibration>\n`;
-                    xml += `      <FlatSource>\n`;
-                    xml += `        <Type>Manual</Type>\n`;
-                    xml += `      </FlatSource>\n`;
-                    xml += `      <FlatDuration>\n`;
-                    xml += `        <Type>Manual</Type>\n`;
-                    xml += `      </FlatDuration>\n`;
-                    xml += `      <PreMountPark>false</PreMountPark>\n`;
-                    xml += `      <PreDomePark>false</PreDomePark>\n`;
+                    xml += `      <PreAction>\n        <Type>0</Type>\n      </PreAction>\n`;
+                    xml += `      <FlatDuration dark='false'>\n        <Type>Manual</Type>\n      </FlatDuration>\n`;
                     xml += `    </Calibration>\n`;
-                    
                     xml += '  </Job>\n';
                 });
             }
